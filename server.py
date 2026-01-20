@@ -4,6 +4,7 @@ import threading
 import time
 import sys
 import signal
+import click
 
 MCAST_GRP = "224.1.1.1"
 MCAST_PORT = 5007
@@ -57,7 +58,7 @@ class Server:
         self.sock.settimeout(1.0)
 
     def __shutdown(self, *_):
-        self.__log("Shutdown")
+        self.__log("Shutting down...")
         self.stop_event.set()
 
     def discovery_listener(self):
@@ -75,22 +76,22 @@ class Server:
                 self.servers.add(sid)
 
     def elect_leader(self):
+        self.__log(f"Running leader election...")
         self.leader = max(self.servers)
         self.is_leader = (self.leader == self.id)
-        self.__log(f"Elected leader is {self.leader}")
+        self.__log(f"Elected leader is {self.leader} ({'me' if self.is_leader else 'not me'})")
 
     def handle_message(self, msg, addr):
         self.__log(f"Received message: {msg} from {addr}")
 
     def run(self):
         # Discovery via multicast in another thread
-        threading.Thread(target=self.discovery_listener, daemon=True).start()
+        discovery_thread = threading.Thread(target=self.discovery_listener)
+        discovery_thread.start()
 
         # Start leader election
         time.sleep(1)
         self.elect_leader()
-
-        print(f"[{self.id}] running (leader={self.is_leader})")
 
         # Incoming message handling
         while not self.stop_event.is_set():
@@ -102,11 +103,19 @@ class Server:
             msg = json.loads(data.decode())
             self.handle_message(msg, addr)
 
+        # Clean exit
+        discovery_thread.join()
         self.sock.close()
         self.mcast.close()
-        print(f"[{self.id}] stopped")
+        self.__log("Shutdown")
 
+
+@click.command()
+@click.argument("port")
+def main(port):
+    port = int(port)
+    Server(port).run()
+    pass
 
 if __name__ == "__main__":
-    port = int(sys.argv[1])
-    Server(port).run()
+    main()
