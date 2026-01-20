@@ -161,11 +161,12 @@ class Server:
             self.__log(f"Error: Wrong value of 'direction': {direction}")
             return
 
-        if cid < self.id:
-            return
-        
         neighbor = self.left if direction == "LEFT" else self.right
 
+        if cid < self.id:
+            # TODO: Something is wrong, a server with lower ID cannot start an election because of this
+            return
+        
         if hop > 1:
             hop -= 1
             self.__send(neighbor, msg)
