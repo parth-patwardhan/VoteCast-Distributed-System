@@ -44,8 +44,37 @@ class Client:
         self.__log(f"Leader is {self.leader}")
 
 
+    def run(self):
+        if self.leader is None:
+            self.__log("Error: No leader")
+
+        # CLI
+        while True:
+            print("\n--- Menu ---")
+            print("1) Show leader")
+            print("2) Show available groups")
+            print("3) Show joined groups")
+            print("4) Start vote")
+            print("5) Exit")
+            choice = int(input("Choose: "))
+            if choice == 1:
+                print(f"Leader: {self.leader}")
+            elif choice == 2:
+                pass
+            elif choice == 3:
+                pass
+            elif choice == 4:
+                return
+            elif choice == 5:
+                return
+            else:
+                print("Invalid choice")
+
 if __name__ == "__main__":
     client = Client()
 
     # Start leader discovery because this is the server all clients talk to
     client.discover_leader()
+
+    # Run client to form groups and start votes
+    client.run()
