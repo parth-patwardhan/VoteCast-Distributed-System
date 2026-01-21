@@ -5,9 +5,7 @@ import time
 import signal
 import click
 
-MCAST_GRP = "224.1.1.1"
-MCAST_PORT = 5007
-BUF = 4096
+from config import MCAST_GRP, MCAST_PORT, BUF
 
 
 def get_local_ip():
@@ -68,17 +66,21 @@ class Server:
     def __discovery_service(self):
         while not self.stop_event.is_set():
             try:
-                data, _ = self.mcast.recvfrom(1024)
+                data, addr = self.mcast.recvfrom(1024)
+                msg = data.decode()
+                if msg.startswith("SERVER:"):
+                    _, sid = msg.split(":", 1)
+                    if sid not in self.servers:
+                        self.__log(f"Discovery service found server: {sid}")
+                        self.servers.add(sid)
+                        self.__build_ring()
+                elif msg == "WHO_IS_LEADER":
+                        self.__log(f"Discovery service got leader request")
+                        if self.is_leader:
+                            self.sock.sendto(f"LEADER:{self.id}".encode(), addr)
+                            self.__log("Replied to leader request")
             except socket.timeout:
                 continue
-
-            msg = data.decode()
-            if msg.startswith("SERVER:"):
-                _, sid = msg.split(":", 1)
-                if sid not in self.servers:
-                    self.__log(f"Discovery service found server: {sid}")
-                    self.servers.add(sid)
-                    self.__build_ring()
     
     def __discovery_service_broadcast(self, interval=1.0):
         self.__log("Starting continuous discovery broadcast thread")

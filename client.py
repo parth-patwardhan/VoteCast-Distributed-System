@@ -1,64 +1,51 @@
 import socket
 import json
 import uuid
-import sys
 import time
+
+from config import MCAST_GRP, MCAST_PORT, BUF
 
 
 class Client:
     def __init__(self):
+        # Own communication
         self.id = str(uuid.uuid4())
-        self.server = None
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(2)
 
+        # Leader server
+        self.leader = None
+
+    def __log(self, msg):
+        print(f"[CLIENT] {msg}")
+
+    def __send_leader_request(self):
+        # Send request to server multicast group
+        self.sock.sendto("WHO_IS_LEADER".encode(), (MCAST_GRP, MCAST_PORT))
+
     def discover_leader(self):
-        msg = {"type": "WHO_IS_LEADER"}
-        self.sock.sendto(json.dumps(msg).encode(), self.server)
+        self.__log("Requesting leader via multicast...")
 
-        try:
-            data, _ = self.sock.recvfrom(1024)
-            reply = json.loads(data.decode())
-            return reply.get("leader")
-        except socket.timeout:
-            return None
+        # Request leader
+        self.__send_leader_request()
 
-    def set_server(self, server):
-        self.server = server
+        # Wait for reply
+        while self.leader is None:
+            try:
+                data, _ = self.sock.recvfrom(BUF)
+                msg = data.decode()
+                if msg.startswith("LEADER:"):
+                    _, sid = msg.split(":", 1)
+                    self.leader = sid
+            except socket.timeout:
+                self.__send_leader_request()
+                continue
 
-    def send_request(self, payload):
-        msg = {
-            "type": "CLIENT_REQUEST",
-            "payload": payload
-        }
-        self.sock.sendto(json.dumps(msg).encode(), self.server)
-
-    def create_group(self, group):
-        self.send_request({"type": "CREATE_GROUP", "group": group})
-
-    def join_group(self, group):
-        self.send_request({
-            "type": "JOIN_GROUP",
-            "group": group,
-            "client": self.id
-        })
-
-    def vote(self, poll, vote):
-        self.send_request({
-            "type": "VOTE",
-            "poll": poll,
-            "client": self.id,
-            "vote": vote
-        })
+        self.__log(f"Leader is {self.leader}")
 
 
 if __name__ == "__main__":
     client = Client()
 
-    leader = None
-    while leader is None:
-        leader = client.discover_leader()
-        print("Discovering leader...")
-        time.sleep(1)
-
-    print("Leader is:", leader)
+    # Start leader discovery because this is the server all clients talk to
+    client.discover_leader()
