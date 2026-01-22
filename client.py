@@ -130,6 +130,16 @@ class Client:
         })
         print(self.__recv())
 
+    def __start_vote(self, name, options):
+        self.__send({
+            "type": "START_VOTE",
+            "group": name,
+            "options": options,
+            "id": self.id,
+            "token": self.token
+        })
+        print(self.__recv())
+
     def run(self):
         if self.leader is None:
             self.__log("Error: No leader")
@@ -162,7 +172,18 @@ class Client:
                 name = input("Group name: ")
                 self.__leave_group(name)
             elif choice == 7:
-                pass
+                name = input("Group name: ")
+                options = []
+                stop = False
+                i = 0
+                while not stop:
+                    i += 1
+                    option = input(f"Option {i} ('s' to stop): ")
+                    if option == "s":
+                        stop = True
+                    else:
+                        options.append(option)
+                self.__start_vote(name, options)
             elif choice == 8:
                 return
             else:

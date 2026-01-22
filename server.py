@@ -358,6 +358,36 @@ class Server:
         self.groups[name]["members"].remove(cid)
         self.__send(addr, {"type": "LEAVE_GROUP_OK", "group": name})
 
+    @requires_auth
+    def __start_vote(self, msg, addr):
+        cid = msg.get("id")
+        name = msg.get("group")
+        options = msg.get("options")
+
+        if cid is None:
+            self.__log(f"Error: Expected key 'id': {msg}")
+            return
+
+        if options is None:
+            self.__log(f"Error: Expected key 'options': {msg}")
+            return
+
+        if name is None:
+            self.__log(f"Error: Expected key 'group': {msg}")
+            return
+
+        if name not in self.groups:
+            self.__log(f"Error: Group does not exist: {name}")
+            return
+
+        if cid not in self.groups[name]["members"]:
+            self.__log(f"Error: Not a member in group {name}")
+            return
+
+        self.__send(addr, {"type": "START_VOTE_OK", "group": name, "options": options})
+        
+        # TODO: reliable multicast to all members in the group
+
     def __handle_message(self, msg, addr):
         t = msg.get("type")
         if t == "HS_ELECTION":
@@ -387,6 +417,10 @@ class Server:
         elif t == "LEAVE_GROUP":
             self.__log("Got: LEAVE_GROUP")
             self.__leave_group(msg, addr)
+            self.__joined_groups(msg, addr)
+        elif t == "START_VOTE":
+            self.__log("Got: START_VOTE")
+            self.__start_vote(msg, addr)
         else:
             self.__log(f"Error: Got invalid message: {msg}")
 
