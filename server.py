@@ -5,6 +5,7 @@ import time
 import signal
 import click
 import secrets
+import uuid
 
 from config import MCAST_GRP, MCAST_PORT, BUF
 
@@ -51,6 +52,7 @@ class Server:
 
         # Vote application
         self.groups = {}
+        self.votes = {}
 
         # Shutdown handling
         self.stop_event = threading.Event()
@@ -60,7 +62,7 @@ class Server:
     def is_authenticated(self, msg):
         cid = msg.get("id")
         token = msg.get("token")
-        return cid in self.clients and self.clients[cid] == token
+        return cid in self.clients and self.clients[cid]["token"] == token
 
     def send_error(self, addr, err):
         self.__send(addr, {"type": "ERROR", "error": err})
@@ -271,7 +273,10 @@ class Server:
             return
 
         token = secrets.token_hex(16)
-        self.clients[cid] = token
+        self.clients[cid] = {
+            "token": token,
+            "addr": addr
+        }
         self.__send(addr, {"type": "REGISTER_OK", "token": token})
 
     @requires_auth
@@ -358,11 +363,35 @@ class Server:
         self.groups[name]["members"].remove(cid)
         self.__send(addr, {"type": "LEAVE_GROUP_OK", "group": name})
 
+    def __reliable_multicast(self, members, msg, timeout):
+        pending = set(members)
+
+        while pending:
+            for cid in list(pending):
+                addr = self.clients[cid]["addr"]
+                self.__send(addr, msg)
+
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    data, addr = self.sock.recvfrom(BUF)
+                    reply = json.loads(data.decode())
+
+                    if reply.get("type") == "VOTE_ACK":
+                        cid = reply.get("id")
+                        if cid in pending:
+                            pending.remove(cid)
+
+                except socket.timeout:
+                    break
+
     @requires_auth
     def __start_vote(self, msg, addr):
         cid = msg.get("id")
         name = msg.get("group")
+        topic = msg.get("topic")
         options = msg.get("options")
+        timeout = msg.get("timeout")
 
         if cid is None:
             self.__log(f"Error: Expected key 'id': {msg}")
@@ -370,6 +399,14 @@ class Server:
 
         if options is None:
             self.__log(f"Error: Expected key 'options': {msg}")
+            return
+
+        if timeout is None:
+            self.__log(f"Error: Expected key 'timeout': {msg}")
+            return
+
+        if topic is None:
+            self.__log(f"Error: Expected key 'timeout': {msg}")
             return
 
         if name is None:
@@ -384,9 +421,24 @@ class Server:
             self.__log(f"Error: Not a member in group {name}")
             return
 
-        self.__send(addr, {"type": "START_VOTE_OK", "group": name, "options": options})
-        
-        # TODO: reliable multicast to all members in the group
+        self.__send(addr, {"type": "START_VOTE_OK", "group": name, "topic": topic, "options": options, "timeout": timeout})
+
+        vote_id = str(uuid.uuid4())
+        self.votes[vote_id] = {
+            "group": name,
+            "topic": topic,
+            "options": options,
+            "votes": {}
+        }
+        members = self.groups[name]["members"]
+        vote_msg = {
+            "type": "VOTE",
+            "vote_id": vote_id,
+            "group": name,
+            "topic": topic,
+            "options": options
+        }
+        self.__reliable_multicast(members, vote_msg, timeout)
 
     def __handle_message(self, msg, addr):
         t = msg.get("type")

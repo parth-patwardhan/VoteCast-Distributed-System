@@ -130,11 +130,13 @@ class Client:
         })
         print(self.__recv())
 
-    def __start_vote(self, name, options):
+    def __start_vote(self, name, topic, options, timeout):
         self.__send({
             "type": "START_VOTE",
             "group": name,
+            "topic": topic,
             "options": options,
+            "timeout": timeout,
             "id": self.id,
             "token": self.token
         })
@@ -173,6 +175,8 @@ class Client:
                 self.__leave_group(name)
             elif choice == 7:
                 name = input("Group name: ")
+                topic = input("Topic: ")
+                timeout = int(input("Timeout: "))
                 options = []
                 stop = False
                 i = 0
@@ -183,7 +187,7 @@ class Client:
                         stop = True
                     else:
                         options.append(option)
-                self.__start_vote(name, options)
+                self.__start_vote(name, topic, options, timeout)
             elif choice == 8:
                 return
             else:
