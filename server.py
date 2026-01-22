@@ -4,6 +4,7 @@ import threading
 import time
 import signal
 import click
+import secrets
 
 from config import MCAST_GRP, MCAST_PORT, BUF
 
@@ -35,6 +36,9 @@ class Server:
         self.pending_replies = 0
         self.election_in_progress = False
         self.__open_discovery_socket()
+
+        # Client authentication
+        self.clients = {}
 
         # Shutdown handling
         self.stop_event = threading.Event()
@@ -109,8 +113,11 @@ class Server:
         self.__log(f"Created ring left={self.left}, right={self.right}")
 
     def __send(self, server_id, msg):
-        ip, port = server_id.split(":")
-        self.sock.sendto(json.dumps(msg).encode(), (ip, int(port)))
+        if type(server_id) is not tuple:
+            ip, port = server_id.split(":")
+            self.sock.sendto(json.dumps(msg).encode(), (ip, int(port)))
+        else:
+            self.sock.sendto(json.dumps(msg).encode(), server_id)
 
     def __hs_start(self):
         if self.election_in_progress:
@@ -236,6 +243,17 @@ class Server:
         if self.left != cid:
             self.__send(self.left, msg)
 
+    def __register(self, msg, addr):
+        cid = msg.get("id")
+
+        if cid is None:
+            self.__log(f"Error: Expected key 'id': {msg}")
+            return
+
+        token = secrets.token_hex(16)
+        self.clients[cid] = token
+        self.__send(addr, {"type": "REGISTER_OK", "token": token})
+
     def __handle_message(self, msg, addr):
         t = msg.get("type")
         if t == "HS_ELECTION":
@@ -247,6 +265,9 @@ class Server:
         elif t == "HS_LEADER":
             self.__log("Got: HS_LEADER")
             self.__hs_leader(msg)
+        elif t == "REGISTER":
+            self.__log("Got: REGISTER")
+            self.__register(msg, addr)
         else:
             self.__log(f"Error: Got invalid message: {msg}")
 

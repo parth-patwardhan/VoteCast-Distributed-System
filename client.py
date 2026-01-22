@@ -16,6 +16,9 @@ class Client:
 
         # Leader server
         self.leader = None
+        
+        # Authentication
+        self.token = None
 
     def __log(self, msg):
         print(f"[CLIENT] {msg}")
@@ -31,6 +34,10 @@ class Client:
         # Send request to leader server
         ip, port = self.leader.split(":")
         self.sock.sendto(json.dumps(msg).encode(), (ip, int(port)))
+
+    def __recv(self):
+        data, _ = self.sock.recvfrom(BUF)
+        return json.loads(data.decode())
 
     def discover_leader(self):
         self.__log("Requesting leader via multicast...")
@@ -51,6 +58,34 @@ class Client:
                 continue
 
         self.__log(f"Leader is {self.leader}")
+
+    def __send_register_request(self):
+        self.__send({
+            "type": "REGISTER",
+            "id": self.id
+        })
+
+    def register(self):
+        self.__log("Registering client...")
+
+        # Request registration
+        self.__send_register_request()
+        
+        # Wait for reply or request again
+        while self.token is None:
+            try:
+                reply = self.__recv()
+                token = reply.get("token")
+                if token is None:
+                    self.__log(f"Error: Expected 'token': {reply}")
+                    continue
+
+                self.token = token
+                self.__log("Registered successfully")
+                        
+            except socket.timeout:
+                self.__send_register_request()
+                continue
 
     def __get_groups(self):
         self.__send({ "type": "GET_GROUPS" })
@@ -90,6 +125,9 @@ if __name__ == "__main__":
 
     # Start leader discovery because this is the server all clients talk to
     client.discover_leader()
+
+    # Get secret token from leader
+    client.register()
 
     # Run client to form groups and start votes
     client.run()
