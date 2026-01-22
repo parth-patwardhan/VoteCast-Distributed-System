@@ -334,6 +334,30 @@ class Server:
         groups = [g for g in self.groups.keys() if cid in self.groups[g]["members"]]
         self.__send(addr, {"type": "JOINED_GROUPS_OK", "groups": groups})
 
+    @requires_auth
+    def __leave_group(self, msg, addr):
+        cid = msg.get("id")
+        name = msg.get("group")
+
+        if cid is None:
+            self.__log(f"Error: Expected key 'id': {msg}")
+            return
+
+        if name is None:
+            self.__log(f"Error: Expected key 'group': {msg}")
+            return
+
+        if name not in self.groups:
+            self.__log(f"Error: Group does not exist: {name}")
+            return
+
+        if cid not in self.groups[name]["members"]:
+            self.__log(f"Error: Not a member in group {name}")
+            return
+
+        self.groups[name]["members"].remove(cid)
+        self.__send(addr, {"type": "LEAVE_GROUP_OK", "group": name})
+
     def __handle_message(self, msg, addr):
         t = msg.get("type")
         if t == "HS_ELECTION":
@@ -360,6 +384,9 @@ class Server:
         elif t == "JOINED_GROUPS":
             self.__log("Got: JOINED_GROUPS")
             self.__joined_groups(msg, addr)
+        elif t == "LEAVE_GROUP":
+            self.__log("Got: LEAVE_GROUP")
+            self.__leave_group(msg, addr)
         else:
             self.__log(f"Error: Got invalid message: {msg}")
 

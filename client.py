@@ -121,6 +121,15 @@ class Client:
         })
         print(self.__recv())
 
+    def __leave_group(self, name):
+        self.__send({
+            "type": "LEAVE_GROUP",
+            "group": name,
+            "id": self.id,
+            "token": self.token
+        })
+        print(self.__recv())
+
     def run(self):
         if self.leader is None:
             self.__log("Error: No leader")
@@ -150,7 +159,8 @@ class Client:
                 name = input("Group name: ")
                 self.__join_group(name)
             elif choice == 6:
-                pass
+                name = input("Group name: ")
+                self.__leave_group(name)
             elif choice == 7:
                 pass
             elif choice == 8:
