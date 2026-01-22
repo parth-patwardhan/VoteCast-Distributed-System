@@ -104,6 +104,15 @@ class Client:
         })
         print(self.__recv())
 
+    def __join_group(self, name):
+        self.__send({
+            "type": "JOIN_GROUP",
+            "group": name,
+            "id": self.id,
+            "token": self.token
+        })
+        print(self.__recv())
+
     def run(self):
         if self.leader is None:
             self.__log("Error: No leader")
@@ -115,8 +124,10 @@ class Client:
             print("2) Show available groups")
             print("3) Show joined groups")
             print("4) Create group")
-            print("5) Start vote")
-            print("6) Exit")
+            print("5) Join group")
+            print("6) Leave group")
+            print("7) Start vote")
+            print("8) Exit")
             choice = int(input("Choose: "))
             if choice == 1:
                 print(f"Leader: {self.leader}")
@@ -128,8 +139,13 @@ class Client:
                 name = input("Group name: ")
                 self.__create_group(name)
             elif choice == 5:
-                return
+                name = input("Group name: ")
+                self.__join_group(name)
             elif choice == 6:
+                pass
+            elif choice == 7:
+                pass
+            elif choice == 8:
                 return
             else:
                 print("Invalid choice")

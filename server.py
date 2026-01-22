@@ -301,8 +301,27 @@ class Server:
     @requires_auth
     def __get_groups(self, msg, addr):
         groups = [g for g in self.groups.keys()]
-        print(groups)
         self.__send(addr, {"type": "GET_GROUPS_OK", "groups": groups})
+
+    @requires_auth
+    def __join_group(self, msg, addr):
+        cid = msg.get("id")
+        name = msg.get("group")
+
+        if cid is None:
+            self.__log(f"Error: Expected key 'id': {msg}")
+            return
+
+        if name is None:
+            self.__log(f"Error: Expected key 'group': {msg}")
+            return
+
+        if name not in self.groups:
+            self.__log(f"Error: Group does not exist: {name}")
+            return
+
+        self.groups[name]["members"].add(cid)
+        self.__send(addr, {"type": "JOIN_GROUP_OK", "group": name})
 
     def __handle_message(self, msg, addr):
         t = msg.get("type")
@@ -324,6 +343,9 @@ class Server:
         elif t == "GET_GROUPS":
             self.__log("Got: GET_GROUPS")
             self.__get_groups(msg, addr)
+        elif t == "JOIN_GROUP":
+            self.__log("Got: JOIN_GROUP")
+            self.__join_group(msg, addr)
         else:
             self.__log(f"Error: Got invalid message: {msg}")
 
