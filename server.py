@@ -483,6 +483,20 @@ class Server:
             "votes": []
         }
 
+        # Replicate vote state to other servers
+        if self.is_leader:
+            for server in self.servers:
+                if server != self.id:
+                    self.__leader_send(server, {
+                        "type": "REPL_VOTE",
+                        "vote_id": vote_id,
+                        "group": name,
+                        "topic": topic,
+                        "options": options,
+                        "timeout": timeout,
+                        "votes": []
+                    })
+
         # FO reliable multicast it to the group
         payload = {
             "type": "VOTE",
@@ -558,14 +572,53 @@ class Server:
             cid = msg["id"]
             token = msg["token"]
             addr = tuple(msg["addr"])
+
+            # Replicate clients
             self.clients[cid] = {"token": token, "addr": addr}
+        elif t == "REPL_VOTE":
+            self.__log("Got: REPL_VOTE")
+            vote_id = msg.get("vote_id")
+            group = msg.get("group")
+            topic = msg.get("topic")
+            options = msg.get("options")
+            timeout = msg.get("timeout")
+            votes = msg.get("votes", [])
+
+            # Replicate the vote in local state
+            self.votes[vote_id] = {
+                "group": group,
+                "topic": topic,
+                "options": options,
+                "votes": votes
+            }
+
+            # Now add this vote to the pending list for FO multicast
+            if group not in self.S:
+                self.S[group]
+
+            # Create an entry in the pending queue for this vote
+            self.fo_pending[(group, self.S[group])] = {
+                "pending": set(self.groups[group]["members"]),
+                "deadline": time.time() + timeout,
+                "msg": {
+                    "type": "VOTE",
+                    "vote_id": vote_id,
+                    "group": group,
+                    "topic": topic,
+                    "options": options
+                },
+                "vote_id": vote_id
+            }
+
+            # Increment the sequence number after adding it to pending
+            self.S[group] += 1
         else:
             self.__log(f"Error: Got invalid message: {msg}")
 
         # Leader multicasts all incoming requests to 
         # non leader servers so that they can continue
         # in the case he fails / crashes.
-        if self.is_leader and t not in ["HS_ELECTION", "HS_REPLY", "HS_LEADER", "REGISTER"]:
+        if self.is_leader and t not in ["HS_ELECTION", "HS_REPLY", "HS_LEADER", "REGISTER", "START_VOTE"]:
             for server in self.servers:
                 if server != self.id:
                     self.__leader_send(server, msg)
