@@ -37,7 +37,7 @@ class Server:
         self.__open_client_side_socket()
 
         # Server-side discovery (HS algorithm)
-        self.servers = set([self.id])
+        self.servers = set()
         self.left = None
         self.right = None
         self.leader = None
@@ -100,6 +100,11 @@ class Server:
                         self.__log(f"Discovery service found server: {sid}")
                         self.servers.add(sid)
                         self.__build_ring()
+
+                        # If the server joined itself, start HS
+                        if self.id == sid:
+                            time.sleep(2)  # Needed with >1s so that other servers can discover it
+                            self.__hs_start()
                 elif msg == "WHO_IS_LEADER":
                         self.__log(f"Discovery service got leader request")
                         if self.is_leader:
