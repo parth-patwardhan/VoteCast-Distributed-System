@@ -151,6 +151,20 @@ class Server:
         else:
             self.sock.sendto(json.dumps(msg).encode(), server_id)
 
+    def __leader_send(self, server_id, msg):
+        """
+        This is for the communication with the client.
+        Only the leader communicates with the client.
+        """
+        if not self.is_leader:
+            return
+        
+        if type(server_id) is not tuple:
+            ip, port = server_id.split(":")
+            self.sock.sendto(json.dumps(msg).encode(), (ip, int(port)))
+        else:
+            self.sock.sendto(json.dumps(msg).encode(), server_id)
+
     def __hs_start(self):
         if self.election_in_progress:
             self.__log("Election already in progress!")
@@ -287,7 +301,19 @@ class Server:
             "token": token,
             "addr": addr
         }
-        self.__send(addr, {"type": "REGISTER_OK", "token": token})
+
+        # Replicate to other servers
+        if self.is_leader:
+            for server in self.servers:
+                if server != self.id:
+                    self.__leader_send(server, {
+                        "type": "REPL_REGISTER",
+                        "id": cid,
+                        "token": token,
+                        "addr": addr
+                    })
+
+        self.__leader_send(addr, {"type": "REGISTER_OK", "token": token})
 
     @requires_auth
     def __create_group(self, msg, addr):
@@ -315,12 +341,12 @@ class Server:
         # Initialize sequence counter for group
         self.S[name] = 0
         
-        self.__send(addr, {"type": "CREATE_GROUP_OK", "group": name})
+        self.__leader_send(addr, {"type": "CREATE_GROUP_OK", "group": name})
 
     @requires_auth
     def __get_groups(self, msg, addr):
         groups = [g for g in self.groups.keys()]
-        self.__send(addr, {"type": "GET_GROUPS_OK", "groups": groups})
+        self.__leader_send(addr, {"type": "GET_GROUPS_OK", "groups": groups})
 
     @requires_auth
     def __join_group(self, msg, addr):
@@ -340,7 +366,7 @@ class Server:
             return
 
         self.groups[name]["members"].add(cid)
-        self.__send(addr, {"type": "JOIN_GROUP_OK", "group": name})
+        self.__leader_send(addr, {"type": "JOIN_GROUP_OK", "group": name})
 
     @requires_auth
     def __joined_groups(self, msg, addr):
@@ -351,7 +377,7 @@ class Server:
             return
 
         groups = [g for g in self.groups.keys() if cid in self.groups[g]["members"]]
-        self.__send(addr, {"type": "JOINED_GROUPS_OK", "groups": groups})
+        self.__leader_send(addr, {"type": "JOINED_GROUPS_OK", "groups": groups})
 
     @requires_auth
     def __leave_group(self, msg, addr):
@@ -375,12 +401,7 @@ class Server:
             return
 
         self.groups[name]["members"].remove(cid)
-        self.__send(addr, {"type": "LEAVE_GROUP_OK", "group": name})
-
-    @requires_auth
-    def __vote_ack(self, msg, addr):
-        # TODO: add vote
-        print("HERE: ", msg)
+        self.__leader_send(addr, {"type": "LEAVE_GROUP_OK", "group": name})
 
     def __fo_multicast(self, group, payload, timeout):
         """
@@ -412,7 +433,7 @@ class Server:
 
         # B-multicast
         for cid in pending:
-            self.__send(self.clients[cid]["addr"], msg)
+            self.__leader_send(self.clients[cid]["addr"], msg)
 
     @requires_auth
     def __start_vote(self, msg, addr):
@@ -450,7 +471,7 @@ class Server:
             self.__log(f"Error: Not a member in group {name}")
             return
 
-        self.__send(addr, {"type": "START_VOTE_OK", "group": name, "topic": topic, "options": options, "timeout": timeout})
+        self.__leader_send(addr, {"type": "START_VOTE_OK", "group": name, "topic": topic, "options": options, "timeout": timeout})
 
         vote_id = str(uuid.uuid4())
 
@@ -532,8 +553,22 @@ class Server:
         elif t == "VOTE_ACK":
             self.__log("Got: VOTE_ACK")
             self.__vote_ack(msg, addr)
+        elif t == "REPL_REGISTER":
+            self.__log("Got: REPL_REGISTER")
+            cid = msg["id"]
+            token = msg["token"]
+            addr = tuple(msg["addr"])
+            self.clients[cid] = {"token": token, "addr": addr}
         else:
             self.__log(f"Error: Got invalid message: {msg}")
+
+        # Leader multicasts all incoming requests to 
+        # non leader servers so that they can continue
+        # in the case he fails / crashes.
+        if self.is_leader and t not in ["HS_ELECTION", "HS_REPLY", "HS_LEADER", "REGISTER"]:
+            for server in self.servers:
+                if server != self.id:
+                    self.__leader_send(server, msg)
 
     def __message_handling(self):
         while not self.stop_event.is_set():
@@ -575,7 +610,7 @@ class Server:
         }
 
         for cid in self.groups[vote["group"]]["members"]:
-            self.__send(self.clients[cid]["addr"], result_msg)
+            self.__leader_send(self.clients[cid]["addr"], result_msg)
 
     def __fo_retransmit_loop(self):
         while not self.stop_event.is_set():
@@ -590,7 +625,7 @@ class Server:
                     continue
 
                 for cid in entry["pending"]:
-                    self.__send(self.clients[cid]["addr"], entry["msg"])
+                    self.__leader_send(self.clients[cid]["addr"], entry["msg"])
 
             for key in finished:
                 group, seq = key
