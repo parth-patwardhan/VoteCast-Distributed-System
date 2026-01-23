@@ -54,7 +54,7 @@ class Server:
         self.groups = {}
         self.votes = {}
 
-        # FO reliable multicast
+        # FO reliable multicast S^p_g
         self.S = {}
 
         # Shutdown handling
@@ -377,6 +377,7 @@ class Server:
 
     @requires_auth
     def __vote_ack(self, msg, addr):
+        # TODO: add vote
         print("HERE: ", msg)
 
     def __fo_multicast(self, group, payload, timeout):
@@ -389,8 +390,8 @@ class Server:
         seq = self.S[group]
 
         msg = {
-            "type": "VOTE",
             "S": seq,
+            "sender": self.id,
             **payload
         }
 
@@ -409,6 +410,7 @@ class Server:
                 reply = json.loads(data.decode())
                 if reply.get("type") == "VOTE_ACK":
                     self.__vote_ack(reply, addr)
+                    pending.discard(reply["id"])
             except socket.timeout:
                 pass
 
@@ -465,7 +467,14 @@ class Server:
         }
 
         # FO reliable multicast it to the group
-        self.__fo_multicast(name, {"vote_id": vote_id, "topic": topic, "options": options}, timeout)
+        payload = {
+            "type": "VOTE",
+            "vote_id": vote_id,
+            "group": name,
+            "topic": topic,
+            "options": options
+        }
+        self.__fo_multicast(name, payload, timeout)
 
     def __handle_message(self, msg, addr):
         t = msg.get("type")

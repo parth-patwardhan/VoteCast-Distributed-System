@@ -1,6 +1,8 @@
 import socket
 import json
 import uuid
+import threading
+import signal
 
 from config import MCAST_GRP, MCAST_PORT, BUF
 
@@ -20,8 +22,21 @@ class Client:
         # Authentication
         self.token = None
 
+        # FO reliable multicast R^q_g and FIFO
+        self.R = {}
+        self.hold_back = {}
+
+        # Shutdown handling
+        self.stop_event = threading.Event()
+        signal.signal(signal.SIGINT, self.__shutdown)
+        signal.signal(signal.SIGTERM, self.__shutdown)
+
     def __log(self, msg):
         print(f"[CLIENT] {msg}")
+
+    def __shutdown(self, *_):
+        self.__log("Shutting down...")
+        self.stop_event.set()
 
     def __send_leader_request(self):
         # Send request to server multicast group
@@ -72,7 +87,6 @@ class Client:
             "token": self.token,
             "group": name
         })
-        print(self.__recv())
 
     def register(self):
         self.__log("Registering client...")
@@ -102,7 +116,6 @@ class Client:
             "id": self.id,
             "token": self.token
         })
-        print(self.__recv())
 
     def __join_group(self, name):
         self.__send({
@@ -111,7 +124,6 @@ class Client:
             "id": self.id,
             "token": self.token
         })
-        print(self.__recv())
 
     def __joined_groups(self):
         self.__send({
@@ -119,7 +131,6 @@ class Client:
             "id": self.id,
             "token": self.token
         })
-        print(self.__recv())
 
     def __leave_group(self, name):
         self.__send({
@@ -128,7 +139,6 @@ class Client:
             "id": self.id,
             "token": self.token
         })
-        print(self.__recv())
 
     def __start_vote(self, name, topic, options, timeout):
         self.__send({
@@ -140,18 +150,89 @@ class Client:
             "id": self.id,
             "token": self.token
         })
-        print(self.__recv())
+
+    def __fo_deliver(self, g, q, msg):
+        # TODO: save vote so that client can answer in CLI
+        S = msg["S"]
+        self.R[g][q] = S
+
+    def __send_fo_ack(self, g, q, S, vote):
+         ip, port = q.split(":")
+         # TODO: self.__send to leader
+         self.sock.sendto(json.dumps({
+            "type": "VOTE_ACK",
+            "group": g,
+            "sender": q,
+            "seq": S,
+            "id": self.id,
+            "vote": vote,
+            "id": self.id,
+            "token": self.token
+        }).encode(), (ip, int(port)))
+
+    def __vote(self, msg):
+        g = msg["group"]
+        # TODO: Do we need sender?
+        q = msg["sender"]
+        S = msg["S"]
+        
+        if g not in self.R:
+            self.R[g] = {}
+            self.hold_back[g] = {}
+
+        if q not in self.R[g]:
+            self.R[g][q] = -1
+            self.hold_back[g][q] = {}
+
+        R_qg = self.R[g][q]
+        
+        if S == R_qg + 1:
+            self.__fo_deliver(g, q, msg)
+
+            while (self.R[g][q] + 1) in self.hold_back[g][q]:
+                next_seq = self.R[g][q] + 1
+                buffered = self.hold_back[g][q].pop(next_seq)
+                self.__fo_deliver(g, q, buffered)
+
+        elif S > R_qg + 1:
+            self.hold_back[g][q][S] = msg
+
+        self.__send_fo_ack(g, q, S, "McDonalds")
+
+    def __handle_message(self, msg, addr):
+        t = msg.get("type")
+        
+        if t == "VOTE":
+            self.__vote(msg)
+        else:
+            self.__log(f"Got message: {msg}")
+
+    def __message_handling(self):
+        while not self.stop_event.is_set():
+            try:
+                data, addr = self.sock.recvfrom(BUF)
+                if data:
+                    try:
+                        msg = json.loads(data.decode())
+                        self.__handle_message(msg, addr)
+                    except Exception as e:
+                        self.__log(f"Invalid message: {e}")
+            except socket.timeout:
+                continue
 
     def run(self):
         if self.leader is None:
             self.__log("Error: No leader")
+
+        message_thread = threading.Thread(target=self.__message_handling)
+        message_thread.start()
 
         # TODO: Remove test
         self.__create_group("Test")
         self.__start_vote("Test", "Essen", ["McDonalds", "Burger King"], 30)
 
         # CLI
-        while True:
+        while not self.stop_event.is_set():
             print("\n--- Menu ---")
             print("1) Show leader")
             print("2) Show available groups")
@@ -196,6 +277,9 @@ class Client:
                 return
             else:
                 print("Invalid choice")
+
+        # Clean exit
+        message_thread.join()
 
 
 if __name__ == "__main__":
