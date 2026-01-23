@@ -11,6 +11,9 @@ from collections import defaultdict
 from config import MCAST_GRP, MCAST_PORT, BUF
 
 
+HEARTBEAT_TIMEOUT = 5.0
+
+
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -58,6 +61,10 @@ class Server:
         # FO reliable multicast S^p_g
         self.S = {}
         self.fo_pending = {}
+
+        # Heartbeat state
+        self.last_heartbeat_time = time.time()
+        self.heartbeat_ack_received = True
 
         # Shutdown handling
         self.stop_event = threading.Event()
@@ -144,6 +151,11 @@ class Server:
                         if self.is_leader:
                             self.sock.sendto(f"LEADER:{self.id}".encode(), addr)
                             self.__log("Replied to leader request")
+                elif msg.startswith("CRASH:"):
+                    self.__log("Crash discovered, rebuild ring")
+                    _, sid = msg.split(":", 1)
+                    self.servers.remove(sid)
+                    self.__build_ring()
             except socket.timeout:
                 continue
     
@@ -155,14 +167,40 @@ class Server:
         msg = f"SERVER:{self.id}".encode()
 
         while not self.stop_event.is_set():
+            # Broadcast for discovery
             try:
                 sock.sendto(msg, (MCAST_GRP, MCAST_PORT))
             except Exception as e:
                 self.__log(f"Error broadcasting discovery: {e}")
 
+            # Heartbeat
+            current_time = time.time()
+            if current_time - self.last_heartbeat_time > HEARTBEAT_TIMEOUT:
+                if self.heartbeat_ack_received:
+                    self.heartbeat_ack_received = False
+                    self.__log(f"Heartbeat timeout for {self.left}, assuming crash.")
+                    try:
+                        sock.sendto(f"CRASH:{self.left}".encode(), (MCAST_GRP, MCAST_PORT))
+                    except Exception as e:
+                        self.__log(f"Error broadcasting heartbeat discovered crash: {e}")
+
+                    time.sleep(2)  # Needed with >1s so that other servers can discover it
+
+                    # Start new HS to get a new leader
+                    self.__hs_start()
+                    
+            self.__send_heartbeat()
+
             time.sleep(interval)
 
         sock.close()
+
+    def __send_heartbeat(self):
+        if self.left is None or self.left == self.id:
+            self.last_heartbeat_time = time.time()
+            self.heartbeat_ack_received = True
+            return
+        self.__send(self.left, {"type": "HEARTBEAT", "id": self.id})
 
     def __build_ring(self):
         ordered = sorted(self.servers)
@@ -649,6 +687,16 @@ class Server:
         elif t == "REPL_STATE":
             self.__log("Got: REPL_STATE")
             self.__replicate_state(msg)
+        elif t == "HEARTBEAT":
+            # self.__log("Got: HEARTBEAT")
+            self.__send(addr, {"type": "HEARTBEAT_ACK", "id": self.id})
+        elif t == "HEARTBEAT_ACK":
+            # self.__log("Got: HEARTBEAT_ACK")
+            sender_id = msg.get("id")
+            if sender_id == self.left:
+                # Ackknowledge heartbeat
+                self.last_heartbeat_time = time.time()
+                self.heartbeat_ack_received = True
         else:
             self.__log(f"Error: Got invalid message: {msg}")
 
