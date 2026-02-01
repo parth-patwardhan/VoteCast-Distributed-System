@@ -29,12 +29,7 @@ def color_text(text, color):
 
 
 def get_local_ip():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
-    finally:
-        s.close()
+    return "127.0.0.1"
 
 
 def requires_auth(fn):
@@ -155,6 +150,7 @@ class Server:
         self.mcast.settimeout(1.0)
         mreq = socket.inet_aton(MCAST_GRP) + socket.inet_aton("0.0.0.0")
         self.mcast.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        self.mcast.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
     
     def __open_client_side_socket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
